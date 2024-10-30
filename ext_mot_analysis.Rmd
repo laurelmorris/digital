@@ -1,0 +1,599 @@
+---
+title: "ext_mot_analysis"
+author: "Jackie Beltrán"
+date: "2024-10-27"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(GLMMadaptive)
+library(performance)
+library(patchwork)
+library(ggpubr)
+library(DHARMa)
+library(patchwork)
+source('../data_cleaning.R') 
+seed_jackie <- 10111997
+```
+
+Load data
+```{r load data}
+
+raw_active <- read_csv("~/Documents/jmb_digital/01_proc_data/inclusion_active_demo.csv",
+                        show_col_types = FALSE)
+
+```
+
+Preprocessing 
+```{r preproc}
+
+# full dataframe with healthy controls and mood/anxiety (MA) disorder groups
+df_active <- preprocess_mot_data(raw_active)
+
+# MA group only
+ma_active <- df_active %>% filter(df_active$sub_group == "MA")
+
+```
+
+```{r}
+df_active_clean <- df_active %>% filter(complete.cases(ext_mot, sub_group, day, Age, Sex, is_weekend))
+```
+
+# AIC-based model results 
+
+## anxiety - model 4
+
+```{r}
+anxiety_ext_model <-
+  mixed_model(
+    fixed = anxious ~ ext_mot * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = df_active_clean,
+    family = zi.poisson(),
+    zi_fixed = ~ ext_mot + sub_group,
+    zi_random = ~ 1 | participant
+  )
+
+```
+
+```{r}
+tab_model(anxiety_ext_model, seed = seed_jackie, dv.labels = c("Extrinsic Motivation ~ Anxiety"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(anxiety_ext_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+
+```{r marginal effects/partial effects plot}
+anxiety_plot_data <-
+  effectPlotData(
+    anxiety_ext_model,
+    df_active_clean,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # df_active = 2138 obs, assigned data = 2078 rows
+
+anxiety_ext_plot <-  
+  ggplot(anxiety_plot_data, aes(x = ext_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = is_weekend 
+  
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +
+
+    labs(x = "Extrinsic Motivation", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.title = element_blank(),
+       legend.position = "",
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r plot with weekend label}
+anxiety_ext_plot <-  
+  ggplot(anxiety_plot_data, aes(x = ext_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = is_weekend)) + # shape = is_weekend 
+  
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +
+
+    labs(x = "Extrinsic Motivation", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    theme(
+       legend.title = element_blank(),
+       legend.position = "",
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+## distress - model 4
+```{r}
+distress_ext_model <-
+  mixed_model(
+    fixed = distressed ~ ext_mot + sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1|participant,
+    data = df_active,
+    family = zi.poisson(),
+    zi_fixed = ~ ext_mot + day + sub_group,
+    zi_random = ~ 1|participant
+  )
+
+summary(distress_ext_model) 
+
+```
+
+```{r}
+tab_model(distress_ext_model, seed = seed_jackie, dv.labels = c("Extrinsic Motivation ~ Distress"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(distress_ext_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+## depressed - model 2
+```{r model 2}
+depressed_ext_model <- mixed_model(fixed = depressed ~ ext_mot*sub_group + day, 
+                             random = ~ 1|participant,
+                             data = df_active, family = zi.poisson(), 
+                             zi_fixed = ~ ext_mot + sub_group, zi_random = ~ 1|participant)
+```
+
+```{r}
+tab_model(depressed_ext_model, seed = seed_jackie, dv.labels = c("Extrinsic Motivation ~ Depression"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(depressed_ext_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+
+# Full model results 
+
+## Distress - model 4
+```{r}
+distress_ext <-
+  mixed_model(
+    fixed = distressed ~ ext_mot * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1|participant,
+    data = df_active,
+    family = zi.poisson(),
+    zi_fixed = ~ ext_mot + day + sub_group,
+    zi_random = ~ 1|participant
+  )
+
+summary(distress_ext) # AIC = 6800.265
+
+```
+
+```{r}
+tab_model(distress_ext, seed = seed_jackie, dv.labels = c("Extrinsic Motivation ~ Distress"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(distress_ext)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+
+```{r marginal effects/partial effects plot}
+distress_ext_plot_data <-
+  effectPlotData(
+    distress_ext,
+    df_active_clean,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+distress_ext_plot <-
+  ggplot(distress_ext_plot_data,
+         aes(x = ext_mot, y = exp(pred), color = sub_group)) +
+  geom_point(size = 4,
+             alpha = 0.5,
+             aes(color = sub_group)) + # shape = Sex
+  
+  geom_smooth(
+    fill = "grey50",
+    alpha = 0.2,
+    method = lm,
+    aes(fill = sub_group),
+    show.legend = F
+  ) +
+
+  labs(x = "Extrinsic Motivation", y = "Distress (eMASQ-EMA)", title = "") +
+  scale_color_manual(values = c("#999999", "#99CCFF")) +
+  scale_y_continuous(limits = c(0,10), breaks = seq(0, 10, by = 2.5)) +
+  
+  theme_classic() +
+
+  theme(
+    legend.position = "",
+    legend.title = element_blank(),
+    plot.title = element_text(size = 20, hjust = 0.5),
+    strip.text.x = element_text(size = 15),
+    axis.text = element_text(size = 20),
+    axis.title.x = element_text(size = 24),
+    axis.title.y = element_text(size = 24, color = "#669999"),
+    legend.text = element_text(size = 20)
+  )
+```
+
+```{r}
+distress_ext_plot_wkend <-
+  ggplot(distress_ext_plot_data,
+         aes(x = ext_mot, y = exp(pred), color = sub_group)) +
+  geom_point(size = 4,
+             alpha = 0.5,
+             aes(color = sub_group, shape = is_weekend)) + 
+  
+  geom_smooth(
+    fill = "grey50",
+    alpha = 0.2,
+    method = lm,
+    aes(fill = sub_group),
+    show.legend = F
+  ) +
+
+  # geom_smooth(fill = "grey50", alpha = 0.2, method = lm,
+  #             aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) +
+  labs(x = "Extrinsic Motivation", y = "Distress (eMASQ-EMA)", title = "") +
+  
+  scale_color_manual(values = c("#999999", "#99CCFF")) +
+  scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+  scale_y_continuous(limits = c(0,10), breaks = seq(0, 10, by = 2.5)) +
+  
+  theme_classic() +
+
+  theme(
+    legend.position = "",
+    legend.title = element_blank(),
+    plot.title = element_text(size = 20, hjust = 0.5),
+    strip.text.x = element_text(size = 15),
+    axis.text = element_text(size = 20),
+    axis.title.x = element_text(size = 24),
+    axis.title.y = element_text(size = 24, color = "#669999"),
+    legend.text = element_text(size = 20)
+  )
+```
+
+
+## Depression - model 4
+
+```{r model 4}
+depressed_ext_model <-
+  mixed_model(
+    fixed = depressed ~ ext_mot * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = df_active,
+    family = zi.poisson(),
+    zi_fixed = ~ ext_mot + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r}
+tab_model(
+  depressed_ext_model,
+  seed = seed_jackie,
+  dv.labels = c("Extrinsic Motivation ~ Depression"),
+  show.intercept = TRUE,
+  show.est = TRUE,
+  collapse.ci = TRUE
+) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(depressed_ext_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+```{r}
+
+depressed_ext_plot <-  
+  ggplot(depressed_plot_data, aes(x = ext_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+  labs(x = "Extrinsic Motivation", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r}
+depressed_ext_plot_wkend <-  
+  ggplot(depressed_plot_data, aes(x = ext_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = is_weekend)) +
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +
+    labs(x = "Extrinsic Motivation", y = "Depression (eMASQ-EMA)", title = "") +
+  
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+## patchwork
+```{r}
+ext_mot_plot <- anxiety_ext_plot + distress_ext_plot + depressed_ext_plot
+```
+
+# MA Cohort 
+
+### Anxiety
+
+```{r}
+model1 <- lmer(anxious ~ ext_mot + day + Age + Sex + is_weekend + (1 | participant), 
+               data = ma_active, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Anxiety eMASQ-EMA ~ ext_mot"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Distress
+```{r}
+model1 <- lmer(distressed ~ ext_mot + day + Age + Sex + is_weekend + (1 | participant), 
+               data = ma_active, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Distress eMASQ-EMA ~ ext_mot"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Depression
+
+```{r}
+model1 <- lmer(depressed ~ ext_mot + day + Age + Sex + is_weekend + (1 | participant), 
+               data = ma_active, REML = FALSE)
+
+summary(model1) 
+
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Depression eMASQ-EMA ~ ext_mot"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  #show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+
+

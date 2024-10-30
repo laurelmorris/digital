@@ -1,0 +1,192 @@
+---
+title: "data_distribution"
+author: "Jackie Beltrán"
+date: "2024-10-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(lmerTest)
+library(performance)
+library(GLMMadaptive)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(patchwork)
+
+source('../data_cleaning.R')
+seed_jackie = 101197
+```
+
+```{r load data}
+masq_data <- read_csv("~/Documents/jmb_digital/00_raw_data/masq_digital.csv",
+                        show_col_types = FALSE)
+
+# raw_active <- read_csv("~/Documents/jmb_digital/00_raw_data/inclusion_active.csv",
+#                         show_col_types = FALSE)
+
+raw_active <- read_csv("~/Documents/jmb_digital/01_proc_data/inclusion_active_demo.csv",
+                        show_col_types = FALSE)
+
+
+```
+
+```{r preproc}
+# full dataframe of masq plus EMA (HC + MA) 
+full_masq <- preprocess_data(masq_data)
+
+# masq style questions (HC + MA)
+masq_df <- masq_preproc(masq_data)
+
+# mood disorder group
+ma <- full_masq %>% filter(full_masq$sub_group == "MA") # ema + masq 
+masq_ma <- masq_df %>% filter(masq_df$sub_group == "MA") # just masq
+
+# real world data
+# full dataframe with healthy controls and mood/anxiety (MA) disorder groups
+df_active <- preprocess_mot_data(raw_active)
+
+# MA group only
+ma_active <- df_active %>% filter(df_active$sub_group == "MA")
+
+
+```
+
+
+```{r real world}
+
+# depressed 
+depressed <- ggplot(na.omit(full_masq), aes(x=factor(depressed)))+
+  geom_bar(stat="count", width=0.7, color = "black", fill = "#CCCCFF" )+
+     labs(x="Depression (eMASQ-EMA)") + 
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+        axis.title = element_text(size = 24))
+
+
+# distressed 
+distressed <- ggplot(na.omit(full_masq), aes(x=factor(distressed)))+
+  geom_bar(stat="count", width=0.7, color = "black", fill="#99CCCC")+
+     labs(
+       x="Distress (eMASQ-EMA)") + 
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+      axis.title = element_text(size = 24))
+
+# anxious 
+anxious <- ggplot(na.omit(full_masq), aes(x=factor(anxious)))+
+  geom_bar(stat="count", width=0.7, color = "black", fill= "#FFCC99")+
+     labs(
+       x="Anxiety (eMASQ-EMA)") + 
+  scale_y_continuous(limits= c(0,600), breaks = seq(0,600, by = 100)) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+      axis.title = element_text(size = 24))
+```
+
+```{r masq}
+
+# anxious arousal
+masq_aa <- ggplot(masq_df, aes(x=factor(MASQ_aa))) +
+  geom_histogram(stat = "count", fill="#CC6633", color = "black")+
+     labs(
+       x="Anxiety (in-lab)") + 
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+      axis.title = element_text(size = 24))
+
+# anhedonia
+masq_anhedonia <- ggplot(masq_df, aes(x=factor(MASQ_anhedonia)))+
+  geom_histogram(stat="count", fill="#996699", color = "black")+
+     labs(
+       x="Depression (in-lab)") + 
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+      axis.title = element_text(size = 24))
+
+#distress
+masq_distress <- ggplot(masq_df, aes(x=factor(MASQ_distress)))+
+  geom_bar(stat="count", fill="#669999", color = "black")+
+     labs(
+       x="Distress (in-lab)") + 
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+      axis.title = element_text(size = 24))
+```
+
+## Distribution of MASQ and real world scales
+```{r fig.dim= c(12,10)}
+
+hc_ma_dist <- ( masq_aa | anxious ) / (masq_distress | distressed) / (masq_anhedonia | depressed)
+
+```
+
+
+## distribution based on group 
+```{r}
+# anxiety
+anxiety <- ggplot(na.omit(df_active), aes(x=factor(anxious), fill = sub_group))+
+  geom_bar(stat="Count", width=0.7)+ # position = "dodge" to have side by side
+  scale_y_continuous(limits = c(0, 800), breaks = seq(0, 800, by = 200)) +
+     labs(
+       x="Anxiety (eMASQ-EMA)",
+       y = "Count") +
+  scale_color_manual(values = c("#999999", "#99CCFF")) +
+  scale_fill_manual(values=c("#999999", "#99CCFF"),
+                     labels = c("HC", "MA")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+        axis.title = element_text(size = 24),
+        axis.title.x = element_text(color = "#CC6633"),
+        legend.position = "none")
+
+
+# distressed
+distressed <- ggplot(na.omit(df_active), aes(x=factor(distressed), fill = sub_group))+
+  geom_bar(stat="count", width=0.7)+
+  scale_y_continuous(limits = c(0, 800), breaks = seq(0, 800, by = 200)) +
+     labs(
+       x="Distress (eMASQ-EMA)",
+       y= "Count") +
+  scale_color_manual(values = c("#999999", "#99CCFF")) +
+  scale_fill_manual(values=c("#999999", "#99CCFF"),
+                     labels = c("HC", "MA")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+        axis.title = element_text(size = 24),
+        axis.title.x = element_text(color = "#669999"),
+        legend.position = "none")
+
+# depression
+depression <- ggplot(na.omit(df_active), aes(x=factor(depressed), fill = sub_group))+
+  geom_bar(stat="count", width=0.7)+
+  scale_y_continuous(limits = c(0, 800), breaks = seq(0, 800, by = 200)) +
+     labs(
+       x="Depression (eMASQ-EMA)",
+       y = "Count") +
+  scale_color_manual(values = c("#999999", "#99CCFF")) +
+  scale_fill_manual(values=c("#999999", "#99CCFF"),
+                     labels = c("HC", "MA")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 20),
+        axis.title = element_text(size = 24),
+        axis.title.x = element_text(color = "#996699"),
+        legend.title = element_blank(),
+        legend.text=element_text(size=rel(1.5)),
+        legend.key.size = unit(2, "lines"))
+
+
+```
+
+```{r}
+anxiety + distressed + depression
+```
+

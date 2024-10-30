@@ -1,0 +1,698 @@
+---
+title: "screentime"
+author: "Jackie Beltrán"
+date: "2024-10-28"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(lme4)
+library(tidyverse)
+library(afex)
+library(lmerTest)
+library(datawizard)
+library(ggpubr)
+
+library(remotes)
+library(nlme)
+library(glmmTMB)
+library(GLMMadaptive)
+library(performance)
+library(DHARMa)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+
+seed_jackie = 101197
+```
+
+# loading data
+```{r}
+
+screen_ema <- read_csv("../../01_proc_data/screen_active_ms.csv")
+```
+
+# preproc
+
+```{r}
+str(screen_ema)
+
+screen_ema <- screen_ema %>% mutate(
+    participant = factor(participant),
+    sub_group = factor(sub_group),
+    Sex = factor(Sex),
+    is_weekend = factor(is_weekend),
+    sub_group = factor(sub_group) %>% relevel(., "HC")) # set HC as the reference group
+
+```
+
+```{r scale screentime}
+
+screen_ema <- screen_ema %>% mutate(screen_scale = as.vector(scale(screentime)))
+
+screen_ema <- screen_ema %>%
+  group_by(participant) %>% 
+  mutate(screen_scale_within = as.vector(scale(screentime)))
+
+# isolate MA grouo
+
+screen_active_MA <- screen_ema %>% filter(sub_group == "MA")
+
+
+```
+
+# AIC-based models 
+
+## Anxiety
+```{r between-participant scaling}
+mixed_model(
+  fixed = anxious ~ screen_scale + day + sub_group,
+  random = ~ 1 | participant,
+  data = screen_ema,
+  family = zi.poisson(),
+  zi_fixed = ~ screen_scale + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r within-participant scaling}
+anx_screen_model <-
+  mixed_model(
+    fixed = anxious ~ screen_scale_within + day + sub_group,
+    random = ~ 1 | participant,
+    data = screen_ema,
+    family = zi.poisson(),
+    zi_fixed = ~ screen_scale_within + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r tab model}
+tab_model(anx_screen_model, seed = seed_jackie, dv.labels = c("Anxiety eMASQ & Screentime"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r check residuals}
+
+residuals <- resid(anx_screen_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+## Distress 
+
+```{r between-participant scaling}
+mixed_model(
+  fixed = distressed ~ screen_scale + day + sub_group + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = screen_ema,
+  family = zi.poisson(),
+  zi_fixed = ~ screen_scale + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r within-participant scaling}
+distress_model <-   mixed_model(
+  fixed = distressed ~ screen_scale_within + day + sub_group + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = screen_ema,
+  family = zi.poisson(),
+  zi_fixed = ~ screen_scale_within + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r tab model}
+tab_model(distress_model, seed = seed_jackie, dv.labels = c("Distress eMASQ & Screentime"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r check residuals}
+
+residuals <- resid(distress_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+## Depression
+
+```{r between-participant scaling}
+mixed_model(
+  fixed = depressed ~ screen_scale + day + sub_group,
+  random = ~ 1 | participant,
+  data = screen_ema,
+  family = zi.poisson(),
+  zi_fixed = ~ screen_scale + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r within-participant scaling}
+
+depressed_model <- 
+    mixed_model(
+    fixed = depressed ~ screen_scale_within + day + sub_group,
+    random = ~ 1 | participant,
+    data = screen_ema,
+    family = zi.poisson(),
+    zi_fixed = ~ screen_scale_within + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r}
+tab_model(depressed_model, seed = seed_jackie, dv.labels = c("Depression eMASQ & Screentime"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r}
+residuals <- resid(depressed_model)
+residual_data <- data.frame(Residuals = residuals)
+
+zip_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+zip_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(zip_resid + zip_qq)
+
+```
+
+
+# full model results
+
+## Anxiety
+```{r between participant scaling}
+anxiety_model <-
+  mixed_model(
+    fixed = anxious ~ screen_scale * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = screen_ema,
+    family = zi.poisson(),
+    zi_fixed = ~ screen_scale + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+
+```{r within participant scaling}
+anxiety_model <-
+  mixed_model(
+    fixed = anxious ~ screen_scale_within * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = screen_ema,
+    family = zi.poisson(),
+    zi_fixed = ~ screen_scale_within + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r tab model}
+tab_model(anxiety_model, seed = seed_jackie, dv.labels = c("Anxiety eMASQ & Screentime"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r check residuals}
+
+residuals <- resid(anxiety_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+```{r marginal effects/partial effects plot}
+anxiety_plot_data <-
+  effectPlotData(
+    anxiety_model,
+    screen_ema,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+anxiety_screen_plot <-  
+  ggplot(anxiety_plot_data, aes(x = screen_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +        
+  labs(x = "Screentime (within-participant scaling)", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r weekend effect plot}
+anxiety_screen_plot <-  
+  ggplot(anxiety_plot_data, aes(x = screen_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = is_weekend)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, 
+              aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) + 
+    labs(x = "Screentime (scaled)", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+## Distress 
+```{r between-participant scaling}
+distress_model <- mixed_model(
+  fixed = distressed ~ screen_scale*sub_group + day + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = screen_ema,
+  family = zi.poisson(),
+  zi_fixed = ~ screen_scale + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r within-participant scaling}
+distress_model <-   mixed_model(
+  fixed = distressed ~ screen_scale_within*sub_group + day + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = screen_ema,
+  family = zi.poisson(),
+  zi_fixed = ~ screen_scale_within + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r tab model}
+tab_model(distress_model, seed = seed_jackie, dv.labels = c("Distress eMASQ & Screentime"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r check residuals}
+
+residuals <- resid(distress_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+```{r marginal effects/partial effects plot}
+distress_plot_data <-
+  effectPlotData(
+    distress_model,
+    screen_ema,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+distress_screen_plot <-  
+  ggplot(distress_plot_data, aes(x = screen_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+    labs(x = "Screentime (within-participant scaling)", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r}
+distress_screen_plot <-  
+  ggplot(distress_plot_data, aes(x = screen_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = is_weekend)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, 
+              aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) + 
+    labs(x = "Screentime (scaled)", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+## Depression
+
+```{r between-participant scaling}
+depressed_model <-
+  mixed_model(
+    fixed = depressed ~ screen_scale*sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = screen_ema,
+    family = zi.poisson(),
+    zi_fixed = ~ screen_scale + day + sub_group,
+    zi_random = ~ 1 | participant
+  ) # AIC = 3353.582
+```
+
+```{r within-participant scaling}
+depressed_model <-
+  mixed_model(
+    fixed = depressed ~ screen_scale_within*sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = screen_ema,
+    family = zi.poisson(),
+    zi_fixed = ~ screen_scale_within + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r tab model}
+tab_model(depressed_model, seed = seed_jackie, dv.labels = c("Depressed eMASQ & Screentime"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r check residuals}
+
+residuals <- resid(depressed_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+```{r marginal effects/partial effects plot}
+depressed_plot_data <-
+  effectPlotData(
+    depressed_model,
+    screen_ema,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+depressed_screen_plot <-  
+  ggplot(depressed_plot_data, aes(x = screen_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+    labs(x = "Screentime (within-participant scaling)", y = "Depression (eMASQ-EMA)", title = "") +
+  
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r}
+depressed_screen_plot <-  
+  ggplot(depressed_plot_data, aes(x = screen_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, 
+              aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) + 
+    labs(x = "Screentime (within-participant scaling)", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    scale_shape_manual(values = c("1" = 16, "2" = 17), labels = c("Male", "Female")) +  # Adjust labels
+
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+```{r}
+screentime_plots <- anxiety_screen_plot + distress_screen_plot + depressed_screen_plot
+```
+
+
+
+## MA Cohort 
+
+### Anxiety
+
+```{r}
+model1 <- lmer(anxious ~ screen_scale_within + day + Age + Sex + is_weekend + (1 | participant), 
+               data = screen_active_MA, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Anxiety eMASQ-EMA ~ Screen"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Distress
+```{r}
+model1 <- lmer(distressed ~ screen_scale_within + day + Age + Sex + is_weekend + (1 | participant), 
+               data = screen_active_MA, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Distress eMASQ-EMA ~ Screentime"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Depression
+
+```{r}
+model1 <- lmer(depressed ~ screen_scale_within + day + Age + Sex + is_weekend + (1 | participant), 
+               data = screen_active_MA, REML = FALSE)
+
+summary(model1) 
+
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Depression eMASQ-EMA ~ Screentime"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  #show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+

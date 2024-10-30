@@ -1,0 +1,813 @@
+---
+title: "git_steps"
+author: "Jackie Beltrán"
+date: "2024-10-25"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+
+library(lme4)
+library(tidyverse)
+library(afex)
+library(lmerTest)
+library(datawizard)
+
+library(remotes)
+library(nlme)
+library(glmmTMB)
+library(GLMMadaptive)
+library(performance)
+library(DHARMa)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+
+seed_jackie = 101197
+```
+
+```{r}
+steps_active <- read_csv("../../01_proc_data/steps_active_ms.csv")
+```
+
+# preprocessing
+
+```{r}
+str(steps_active)
+
+steps_active <- steps_active %>% mutate(
+    participant = factor(participant),
+    sub_group = factor(sub_group),
+    Sex = factor(Sex),
+    is_weekend = factor(is_weekend),
+    device_type = factor(device_type),
+    sub_group = factor(sub_group) %>% relevel(., "HC")) # set HC as the reference group
+
+
+```
+
+```{r scale steps}
+
+steps_active <- steps_active %>%
+  mutate(steps_scale = as.vector(scale(steps)))
+
+steps_active <- steps_active %>%
+  group_by(participant) %>% 
+  mutate(steps_scale_within = as.vector(scale(steps)))
+
+# isolate MA grouo
+
+steps_active_MA <- steps_active %>% filter(sub_group == "MA")
+
+```
+
+# AIC-based model results
+
+## Full cohort
+
+### Anxiety 
+
+```{r between participant scaling}
+anx_model <- mixed_model(
+  fixed = anxious ~ steps_scale * sub_group + day + Age + Sex,
+  random = ~ 1 | participant,
+  data = steps_active,
+  family = zi.poisson(),
+  zi_fixed = ~ steps_scale + sub_group + day,
+  zi_random = ~ 1 | participant
+)
+```
+
+
+```{r}
+anxiety_model <-
+  mixed_model(
+    fixed = anxious ~ steps_scale_within * sub_group + day + Age + Sex,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + sub_group + day,
+    zi_random = ~ 1 | participant
+  )
+
+anxiety_model <-
+  mixed_model(
+    fixed = anxious ~ steps_scale_within * sub_group + day,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + sub_group + day,
+    zi_random = ~ 1 | participant
+  )
+
+summary(anxiety_model)
+```
+
+```{r tab model}
+tab_model(anxiety_model, seed = seed_jackie, dv.labels = c("Anxiety eMASQ-EMA & Steps"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+
+```
+
+```{r checking residuals}
+residuals <- resid(anxiety_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+```{r marginal effects/partial effects plot}
+anxiety_plot_data <-
+  effectPlotData(
+    anxiety_model,
+    steps_active,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+anxiety_steps_plot <-  
+  ggplot(anxiety_plot_data, aes(x = steps_scale_within, y = pred, color = sub_group)) + 
+  geom_point(size = 2, alpha = 0.4, aes(color = sub_group, shape = Sex)) + 
+  geom_smooth(fill = "grey50",alpha = 0.2, method = lm, aes(color = sub_group, fill = sub_group, linetype = Sex), show.legend = FALSE) + 
+    labs(x = "Steps (scaled)", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("1" = 16, "2" = 17), labels = c("Male", "Female")) +  # Adjust labels
+
+    theme(
+       #legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+### Distress
+
+```{r between participant scaling}
+mixed_model(
+  fixed = distressed ~ steps_scale * sub_group + day,
+  random = ~ 1 | participant,
+  data = steps_active,
+  family = zi.poisson(),
+  zi_fixed = ~ steps_scale + sub_group + day,
+  zi_random = ~ 1 | participant
+) # AIC = 4187.315
+
+```
+
+```{r within participants scaling}
+distress_model <-
+  mixed_model(
+    fixed = distressed ~ steps_scale_within * sub_group + day,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + sub_group + day,
+    zi_random = ~ 1 | participant
+  )
+
+summary(distress_model) # AIC = 4188.113
+
+```
+
+```{r tab model}
+tab_model(distress_model, seed = seed_jackie, dv.labels = c("Distress EMA & Steps"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+
+```
+
+```{r checking residuals}
+residuals <- resid(distress_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m4_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m4_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m4_resid + m4_qq)
+
+```
+
+```{r marginal effects/partial effects plot}
+distress_plot_data <-
+  effectPlotData(
+    distress_model,
+    steps_active,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+distress_steps_plot <-  
+  ggplot(distress_plot_data, aes(x = steps_scale_within, y = pred, color = sub_group)) + 
+  geom_point(size = 2, alpha = 0.4, aes(color = sub_group)) + 
+  geom_smooth(fill = "grey50",alpha = 0.2, method = lm, aes(color = sub_group, fill = sub_group)) + 
+    labs(x = "Steps (scaled)", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+### Depression 
+
+```{r between participant scaling}
+mixed_model(
+  fixed = depressed ~ steps_scale + day + sub_group,
+  random = ~ 1 | participant,
+  data = steps_active,
+  family = zi.poisson(),
+  zi_fixed = ~ steps_scale + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r within participant scaling}
+depressed_model <-
+  mixed_model(
+    fixed = depressed ~ steps_scale_within + day + sub_group,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r tab model}
+tab_model(depressed_model, seed = seed_jackie, dv.labels = c("Depression EMA & Steps"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+
+```
+
+```{r checking residuals}
+residuals <- resid(depressed_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+```{r marginal effects/partial effects plot}
+depressed_plot_data <-
+  effectPlotData(
+    depressed_model,
+    steps_active,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+depressed_steps_plot <-  
+  ggplot(depressed_plot_data, aes(x = steps_scale_within, y = pred, color = sub_group)) + 
+  geom_point(size = 2, alpha = 0.4, aes(color = sub_group)) + 
+  geom_smooth(fill = "grey50",alpha = 0.2, method = lm, aes(color = sub_group, fill = sub_group)) + 
+    labs(x = "Steps (scaled)", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+# full models results 
+
+## Full cohort
+
+### Anxiety 
+
+```{r between participant scaling}
+anxiety_model <- mixed_model(
+  fixed = anxious ~ steps_scale * sub_group + day + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = steps_active,
+  family = zi.poisson(),
+  zi_fixed = ~ steps_scale + sub_group + day,
+  zi_random = ~ 1 | participant
+)
+```
+
+
+```{r within participants scaling}
+anxiety_model <-
+  mixed_model(
+    fixed = anxious ~ steps_scale_within * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + sub_group + day,
+    zi_random = ~ 1 | participant
+  )
+
+summary(anxiety_model)
+```
+
+```{r tab model}
+tab_model(anxiety_model, seed = seed_jackie, dv.labels = c("Anxiety eMASQ-EMA & Steps"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+
+```
+
+```{r checking residuals}
+residuals <- resid(anxiety_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+```{r marginal effects/partial effects plot}
+anxiety_plot_data <-
+  effectPlotData(
+    anxiety_model,
+    steps_active,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+anxiety_steps_plot <-  
+  ggplot(anxiety_plot_data, aes(x = steps_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +       
+  labs(x = "Steps (within-participant scaling)", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("1" = 16, "2" = 17), labels = c("Male", "Female")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r sex effect plot}
+anxiety_steps_plot <-  
+  ggplot(anxiety_plot_data, aes(x = steps_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, 
+              aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) + 
+    labs(x = "Steps (scaled)", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("1" = 16, "2" = 17), labels = c("Male", "Female")) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+### Distress
+
+```{r between participant scaling}
+distress_model <- mixed_model(
+  fixed = distressed ~ steps_scale * sub_group + day + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = steps_active,
+  family = zi.poisson(),
+  zi_fixed = ~ steps_scale + sub_group + day,
+  zi_random = ~ 1 | participant
+) # AIC = 4188.354
+
+```
+
+```{r within participants scaling}
+distress_model <-
+  mixed_model(
+    fixed = distressed ~ steps_scale_within * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + sub_group + day,
+    zi_random = ~ 1 | participant
+  )
+
+summary(distress_model) # AIC = 4188.587
+
+```
+
+```{r tab model}
+tab_model(distress_model, seed = seed_jackie, dv.labels = c("Distress EMA & Steps"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+
+```
+
+```{r checking residuals}
+residuals <- resid(distress_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m4_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m4_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m4_resid + m4_qq)
+
+```
+
+```{r marginal effects/partial effects plot}
+distress_plot_data <-
+  effectPlotData(
+    distress_model,
+    steps_active,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+distress_steps_plot <-  
+  ggplot(distress_plot_data, aes(x = steps_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +       
+    labs(x = "Steps (within-participant scaling)", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+
+```
+
+```{r sex effect}
+
+distress_steps_plot <-  
+  ggplot(distress_plot_data, aes(x = steps_scale_within, y = pred, color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + 
+  geom_smooth(fill = "grey50",alpha = 0.2, method = lm, 
+              aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) +
+    labs(x = "Steps (within-participant scaling)", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+### Depression 
+
+```{r between participant scaling}
+depressed_model <- mixed_model(
+  fixed = depressed ~ steps_scale * sub_group + day + Age + Sex + is_weekend,
+  random = ~ 1 | participant,
+  data = steps_active,
+  family = zi.poisson(),
+  zi_fixed = ~ steps_scale + day + sub_group,
+  zi_random = ~ 1 | participant
+)
+```
+
+```{r within participant scaling}
+depressed_model <-
+  mixed_model(
+    fixed = depressed ~ steps_scale_within * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = steps_active,
+    family = zi.poisson(),
+    zi_fixed = ~ steps_scale_within + day + sub_group,
+    zi_random = ~ 1 | participant
+  )
+```
+
+```{r tab model}
+tab_model(depressed_model, seed = seed_jackie, dv.labels = c("Depression EMA & Steps"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+
+```
+
+```{r checking residuals}
+residuals <- resid(depressed_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+```{r marginal effects/partial effects plot}
+depressed_plot_data <-
+  effectPlotData(
+    depressed_model,
+    steps_active,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+depressed_steps_plot <-  
+  ggplot(depressed_plot_data, aes(x = steps_scale_within, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+    labs(x = "Steps (within-participant scaling)", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("1" = 16, "2" = 17), labels = c("Male", "Female")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+
+```
+
+```{r sex effect}
+depressed_steps_plot <-  
+  ggplot(depressed_plot_data, aes(x = steps_scale_within, y = pred, color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, 
+              aes(group = interaction(Sex, sub_group), fill =sub_group), show.legend = F) + 
+    labs(x = "Steps (scaled)", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("1" = 16, "2" = 17), labels = c("Male", "Female")) +
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+
+```
+
+
+```{r}
+steps_plots <- anxiety_steps_plot + distress_steps_plot + depressed_steps_plot
+```
+
+
+
+## MA Cohort 
+
+### Anxiety
+
+```{r}
+model1 <- lmer(anxious ~ steps_scale_within + day + Age + Sex + is_weekend + (1 | participant), 
+               data = steps_active_MA, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Anxiety eMASQ-EMA ~ Steps"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Distress
+```{r}
+model1 <- lmer(distressed ~ steps_scale_within + day + Age + Sex + is_weekend + (1 | participant), 
+               data = steps_active_MA, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Distress eMASQ-EMA ~ Steps"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Depression
+
+```{r}
+model1 <- lmer(depressed ~ steps_scale_within + day + Age + Sex + is_weekend + (1 | participant), 
+               data = steps_active_MA, REML = FALSE)
+
+summary(model1) # sig effect of steps, AIC = 2552.5
+
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Depression eMASQ-EMA ~ Steps"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  #show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+

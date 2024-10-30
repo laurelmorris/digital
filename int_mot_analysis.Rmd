@@ -1,0 +1,562 @@
+---
+title: "int_motivation_analysis"
+author: "Jackie Beltrán"
+date: "2024-10-27"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+library(tidyverse)
+library(lme4)
+library(lmerTest)
+library(GLMMadaptive)
+library(performance)
+library(patchwork)
+library(ggpubr)
+library(DHARMa)
+library(patchwork)
+source('../data_cleaning.R') 
+seed_jackie <- 10111997
+```
+
+Load data
+```{r load data}
+
+raw_active <- read_csv("~/Documents/jmb_digital/01_proc_data/inclusion_active_demo.csv",
+                        show_col_types = FALSE)
+
+```
+
+Preprocessing 
+```{r preproc}
+
+# full dataframe with healthy controls and mood/anxiety (MA) disorder groups
+df_active <- preprocess_mot_data(raw_active)
+
+# MA group only
+ma_active <- df_active %>% filter(df_active$sub_group == "MA")
+
+```
+
+```{r}
+df_active_clean <- df_active %>% filter(complete.cases(int_mot, sub_group, day, Age, Sex, is_weekend))
+```
+
+
+# AIC-based model results 
+
+## anxiety - model 2
+
+```{r}
+anxiety_int_model <- mixed_model(fixed = anxious ~ int_mot*sub_group + day, 
+                           random = ~ 1|participant,
+                           data = df_active, family = zi.poisson(), 
+                           zi_fixed = ~ int_mot + sub_group, zi_random = ~ 1|participant)
+```
+
+```{r}
+tab_model(anxiety_int_model, seed = seed_jackie, dv.labels = c("Intrinsic Motivation ~ Anxiety"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(anxiety_int_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+## distress
+```{r}
+distress_int <-
+  mixed_model(
+    fixed = distressed ~ int_mot * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1|participant,
+    data = df_active,
+    family = zi.poisson(),
+    zi_fixed = ~ int_mot + day + sub_group,
+    zi_random = ~ 1|participant
+  )
+
+summary(distress_int) # AIC = 6739.863
+
+```
+
+```{r}
+tab_model(distress_int, seed = seed_jackie, dv.labels = c("Intrinsic Motivation ~ Distress"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(distress_int)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+
+```{r marginal effects/partial effects plot}
+distress_int_plot_data <-
+  effectPlotData(
+    distress_int,
+    df_active_clean,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+distress_int_plot <-  
+  ggplot(distress_int_plot_data, aes(x = int_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+  labs(x = "Intrinsic Motivation", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+```{r}
+distress_int_plot_wkend <-  
+  ggplot(distress_int_plot_data, aes(x = int_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = is_weekend)) + 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+  labs(x = "Intrinsic Motivation", y = "Distress (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+  scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.position = "",
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#669999"),
+       legend.text = element_text(size = 20)
+     )
+`
+```
+
+## depression - model 2
+
+```{r}
+depressed_int <-
+  mixed_model(
+    fixed = depressed ~ int_mot * sub_group + day,
+    random = ~ 1 | participant,
+    data = df_active,
+    family = zi.poisson(),
+    zi_fixed = ~ int_mot + sub_group + day,
+    zi_random = ~ 1 | participant)
+      
+summary(depressed_int) # AIC = 5952.291
+
+```
+
+```{r}
+tab_model(depressed_int, seed = seed_jackie, dv.labels = c("Intrinsic Motivation ~ Depression"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(depressed_int)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+
+# Full model results
+
+## anxiety - model 4
+```{r}
+anxiety_int_model <- mixed_model(fixed = anxious ~ int_mot*sub_group + day + Age + Sex + is_weekend, 
+                           random = ~ 1|participant,
+                           data = df_active, family = zi.poisson(), 
+                           zi_fixed = ~ int_mot + sub_group, zi_random = ~ 1|participant)
+```
+
+```{r}
+tab_model(anxiety_int_model, seed = seed_jackie, dv.labels = c("Intrinsic Motivation ~ Anxiety"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+```{r check residuals}
+
+residuals <- resid(anxiety_int_model)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+```{r marginal effects/partial effects plot}
+anxiety_plot_data <-
+  effectPlotData(
+    anxiety_int_model,
+    df_active_clean,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # df_active = 2138 obs, assigned data = 2078 rows
+
+anxiety_mot_plot <-  
+  ggplot(anxiety_plot_data, aes(x = int_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+  labs(x = "Intrinsic Motivation", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+
+    theme(
+       legend.title = element_blank(),
+       legend.position = "",
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r}
+anxiety_mot_plot <-  
+  ggplot(anxiety_plot_data, aes(x = int_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = is_weekend)) + 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +
+    labs(x = "Intrinsic Motivation", y = "Anxiety (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.title = element_blank(),
+       legend.position = "",
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#CC6633"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+
+## depression - model 4
+```{r}
+depressed_int <-
+  mixed_model(
+    fixed = depressed ~ int_mot * sub_group + day + Age + Sex + is_weekend,
+    random = ~ 1 | participant,
+    data = df_active,
+    family = zi.poisson(),
+    zi_fixed = ~ int_mot + sub_group + day,
+    zi_random = ~ 1 | participant)
+      
+summary(depressed_int) # AIC = 5956.534
+
+```
+
+```{r}
+tab_model(depressed_int, seed = seed_jackie, dv.labels = c("Intrinsic Motivation ~ Depression"),
+          show.intercept = TRUE, show.est = TRUE, collapse.ci = TRUE) 
+
+```
+
+
+```{r check residuals}
+
+residuals <- resid(depressed_int)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles"
+) + theme_minimal()
+
+(m_resid + m_qq)
+```
+
+```{r marginal effects/partial effects plot}
+depressed_plot_data <-
+  effectPlotData(
+    depressed_int,
+    df_active_clean,
+    marginal = TRUE,
+    cores = 1L,
+    sandwich = T
+  ) # sandwich is to use median and is a more robust way of calculating standard errors when models have non-constant variance / violate homoscedasticity assumption
+
+depressed_int_plot <-  
+  ggplot(depressed_plot_data, aes(x = int_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+  labs(x = "Intrinsic Motivation", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r - warning??}
+depressed_int_plot_wkend <-  
+  ggplot(depressed_plot_data, aes(x = int_mot, y = exp(pred), color = sub_group)) + 
+  geom_point(size = 4, alpha = 0.5, aes(color = sub_group, shape = Sex)) + # shape = Sex 
+  geom_smooth(fill = "grey50", alpha = 0.2, method = lm, aes(fill=sub_group), show.legend = F) +    
+  labs(x = "Intrinsic Motivation", y = "Depression (eMASQ-EMA)", title = "") +
+    theme_classic() +
+    scale_color_manual(values = c("#999999", "#99CCFF")) +
+    scale_shape_manual(values = c("0" = 16, "1" = 17), labels = c("Weekday", "Weekend")) +
+    scale_y_continuous(limits = c(0, 10), breaks = seq(0, 10, by = 2.5)) +
+    theme(
+       legend.title = element_blank(),
+       plot.title = element_text(size = 20, hjust = 0.5),
+       strip.text.x = element_text(size = 15),
+       axis.text = element_text(size = 20),
+       axis.title.x = element_text(size = 24),
+       axis.title.y = element_text(size = 24, color = "#996699"),
+       legend.text = element_text(size = 20)
+     )
+```
+
+```{r}
+int_mot_plot <- anxiety_mot_plot + distress_int_plot + depressed_int_plot
+```
+
+## MA Cohort 
+
+### Anxiety
+
+```{r}
+model1 <- lmer(anxious ~ int_mot + day + Age + Sex + is_weekend + (1 | participant), 
+               data = ma_active, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Anxiety eMASQ-EMA ~ int_mot"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Distress
+```{r}
+model1 <- lmer(distressed ~ int_mot + day + Age + Sex + is_weekend + (1 | participant), 
+               data = ma_active, REML = FALSE)
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Distress eMASQ-EMA ~ int_mot"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+### Depression
+
+```{r}
+model1 <- lmer(depressed ~ int_mot + day + Age + Sex + is_weekend + (1 | participant), 
+               data = ma_active, REML = FALSE)
+
+summary(model1) 
+
+```
+
+```{r}
+tab_model(
+  model1,
+  dv.labels = c("Depression eMASQ-EMA ~ Int_mot"),
+  # col.order = c("est", "ci", "p", "stat", "se", "df.error"),
+  seed = seed_jackie,
+  #show.intercept = T,
+  show.est = T,
+  collapse.ci = T,
+  #show.se = T,
+  show.stat = T,
+  show.df = T
+) 
+```
+
+```{r checking residuals}
+residuals <- resid(model1)
+residual_data <- data.frame(Residuals = residuals)
+
+m_resid <- ggplot(residual_data, aes(x = Residuals)) +
+  geom_histogram(binwidth = 0.7, fill = "gray", color = "black") +
+  labs(title = "Model Residuals",
+       x = "Residuals",
+       y = "Frequency") +
+  theme_minimal()
+
+m_qq <- ggqqplot(
+  data = residuals,
+  title = "QQ Plot of Model Residuals",
+  xlab = "Theoretical Quantiles",
+  ylab = "Sample Quantiles") + theme_minimal()
+
+(m_resid + m_qq)
+
+```
+
+
