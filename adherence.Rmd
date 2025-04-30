@@ -1,0 +1,253 @@
+---
+title: "adherence"
+author: "Jackie Beltrán"
+date: "2023-02-16"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(ggpubr)
+library(data.table)
+library(reshape2)
+library(readxl)
+library(patchwork)
+library(rstatix)
+```
+
+```{r loading data}
+getwd()
+
+lamp_data <- read_csv("../../00_raw_data/masq_digital.csv")
+
+full_active <- read_csv("../../00_raw_data/inclusion_active.csv")
+
+```
+
+```{r preproc}
+# N = 101
+full_df <-
+  full_active %>% select(
+    'participant',
+    'group',
+    'sub_group',
+    'day',
+    'stress',
+    'depressed',
+    'distressed',
+    'anxious',
+    'mood',
+    'sleep',
+    'int_mot',
+    'ext_mot'
+  )
+
+```
+
+```{r drop days with no surveys completed }
+# Drop rows with more than 7 NA values across columns (this would implicate they answered no surveys on a given day)
+clean_df <- full_df[rowSums(is.na(full_df)) <= 7, ]
+
+excluded_rows <- which(rowSums(is.na(full_df)) > 7)
+
+excluded_data <- full_df[excluded_rows, ] # N=5 MA, 2 HC
+
+```
+
+Average days
+```{r}
+
+# subset groups of interest
+days_full <- clean_df %>% 
+  select('participant','day','sub_group') 
+
+# summarize the data by group: how many days out of 30 were completed by participant
+subjects_full <- days_full %>% group_by(participant, sub_group) %>%
+  summarise(
+    n= n()) %>% 
+  mutate(percent = (n /30 * 100))
+
+# take average, we see no major difference in days completed by subject 
+avg_days_full <- subjects_full %>%
+  group_by(sub_group) %>%
+  rstatix::get_summary_stats(n, type ="mean_sd") 
+
+```
+
+including participants who completed at least one survey a day
+calculate how many days of surveys each participant completed out of 30, and took the average by group
+
+on average, HC completed 21.3 days of surveys while MDD completed 20.9
+```{r}
+
+# t test 
+HC_days_f <- subjects_full %>% filter(sub_group=="HC")
+MA_days_f <- subjects_full %>% filter(sub_group=="MA")
+
+# normality test suggests the distribution of the data is sig different from ~N
+
+with(subjects_full, shapiro.test(n[sub_group == "HC"])) # p = 0.0069
+with(subjects_full, shapiro.test(n[sub_group == "MA"])) # p = 0.007
+
+# F test 
+res.ftest <- var.test(n ~ sub_group, data = subjects_full)
+res.ftest # p =0.54, no sig difference in the variances but safer to go with welch
+
+t.test(HC_days_f$n, MA_days_f$n, paired=FALSE) # t = 0.40395, df = 96.957, p-value = 0.6871
+
+```
+
+```{r group box plot of avg days per group}
+
+# Define the custom order for the factor levels
+custom_order <- c("HC", "MA")
+
+# Apply the custom order to the 'Group' variable
+subjects_full$Group <- factor(subjects_full$sub_group, levels = custom_order)
+
+
+bxp <- ggpubr::ggboxplot(
+  subjects_full,
+  x = "Group",
+  y = "percent",
+  fill = "Group",
+  ylab = "Days",
+  xlab = "Group",
+  add = "jitter",
+) +
+  
+  labs(title = " ",
+       x = "",
+       y = "% of days") +
+  ylim(0, 100) + 
+  scale_fill_manual(values = c("#999999", "#99CCFF")) +
+  theme_classic() +
+  theme(
+    axis.text = element_text(size = 20),
+    axis.title = element_text(size = 24),
+    axis.ticks = element_line(size = 1.5),
+    legend.title = element_blank(),
+    legend.position = "",
+  )
+
+```
+
+How many participants from each group are completing surveys on a given day
+
+```{r MA}
+MA_full <- days_full %>% filter(sub_group == "MA")
+
+n_MA_f <-length(unique(MA_full$participant)) # N = 52
+
+# Group by day and count the number of participants who completed surveys
+MA_summary <- MA_full %>% 
+  group_by(day) %>%
+  summarise(n = n()) %>%
+  ungroup()
+
+# Calculate mean and standard deviation
+MA_summary <- 
+MA_summary %>% 
+  mutate(
+    mean = n / n_MA_f,
+    avg_percent =(mean * 100),
+    std_dev = sqrt(mean * (1 - mean) / n), # based on the number of participants completing surveys each day
+    std_error = std_dev / sqrt(n),
+  )
+
+MA_summary$group <- "MA"
+```
+
+
+```{r HC group}
+
+HC_full <- days_full %>% filter(sub_group == "HC")
+n_HC_f <- length(unique(HC_full$participant)) # N = 49
+
+# Group by day and count the number of completed surveys
+HC_summary <- HC_full %>% 
+  group_by(day) %>%
+  summarise(n = n()) %>%
+  ungroup()
+
+# Calculate mean and standard deviation
+HC_summary <- HC_summary %>% 
+  mutate(
+    mean = n / n_HC_f,
+    avg_percent =(mean * 100),
+    std_dev = sqrt(mean * (1 - mean) / n), # calculates standard deviation of a proportion
+    std_error = (std_dev / sqrt(n))
+  )
+
+HC_summary$group <- "HC"
+```
+
+
+```{r plot days variability}
+
+days_df_full <- rbind(HC_summary, MA_summary)
+
+# line plot of average
+days_lineplot <- ggplot(data=days_df_full, aes(x=day, y=avg_percent, group=group)) +
+  geom_line(aes(color=group)) +
+  geom_point(aes(color=group)) + 
+  
+  geom_errorbar(aes(ymin=avg_percent-std_dev * 100,
+                    ymax=avg_percent + std_dev * 100,
+                    color = group),
+                    width =0.5, position = position_dodge(0.05)) +
+  
+  labs(title="",x="Day", y = "% of subjects") +
+  
+  scale_color_manual(values = c("#999999", "#99CCFF")) +
+  ylim(0, 100) + 
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(2, 30, by = 2))  +
+  theme(legend.title = element_blank(),
+        legend.position = "right",
+        legend.text = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        axis.title = element_text(size = 24),
+        axis.ticks = element_line(size = 1.5),
+        legend.key.size = unit(4, "lines")
+        )
+```
+
+
+```{r t test}
+
+subjects_full %>% 
+  group_by(sub_group) %>%
+  get_summary_stats(n, type = "mean_sd")
+
+# HC have a slightly greater distribution in terms of the days of surveys they complete 
+ggboxplot(days_df_full, x = "group", y = "avg_percent", 
+          color = "group", palette = c("#00AFBB", "#E7B800"),
+        ylab = "days", xlab = "")
+
+# Shapiro-Wilk normality test for HC
+with(days_df_full, shapiro.test(avg_percent[group == "HC"])) # p = 0.07185
+
+# Shapiro-Wilk normality test for DA
+with(days_df_full, shapiro.test(avg_percent[group == "MA"])) # p = 0.9066
+
+# data are normally distributed , check the variances: p = 0.7012
+
+res.ftest <- var.test(avg_percent ~ group, data = days_df_full)
+res.ftest
+
+# t test : t = 0.87413, p = 0.3857
+res <- t.test(avg_percent ~ group, data = days_df_full, var.equal = TRUE)
+res
+
+```
+
+combine these plots using patchwork
+```{r}
+
+bxp + days_lineplot
+```
